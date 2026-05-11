@@ -21,6 +21,8 @@ public class GameScreen {
     private List<GameObject> objects;
     private List<Obstacle> obstacles;
     private List<Particle> particles;
+    private List<Scenery> sceneryLeft;
+    private List<Scenery> sceneryRight;
     private Spawner spawner;
 
     private long score;
@@ -32,7 +34,7 @@ public class GameScreen {
     private float resumeX = 200, resumeY = 350, resumeW = 200, resumeH = 50;
     private float exitX = 200, exitY = 280, exitW = 200, exitH = 50;
     private float roadOffset = 0;
-    private float treeOffset = 0;
+    private float scenerySpawnTimer = 0;
 
     private List<ScorePopup> scorePopups = new ArrayList<>();
 
@@ -47,6 +49,8 @@ public class GameScreen {
         objects = new ArrayList<>();
         obstacles = new ArrayList<>();
         particles = new ArrayList<>();
+        sceneryLeft = new ArrayList<>();
+        sceneryRight = new ArrayList<>();
         spawner = new Spawner();
 
         loadHighScore();
@@ -60,7 +64,7 @@ public class GameScreen {
 
     private void saveHighScore() {
         if (score > highScore) {
-            highScore = (int)score;
+            highScore = (int) score;
             Preferences prefs = Gdx.app.getPreferences("runforjoy");
             prefs.putInteger("highscore", highScore);
             prefs.flush();
@@ -76,6 +80,7 @@ public class GameScreen {
         screenShake = screenFlash = levelUpTimer = 0;
         gameTimer = 0;
         scorePopups.clear();
+        scenerySpawnTimer = 0;
 
         RunForJoy.currentLevel = 1;
         RunForJoy.hasShield = false;
@@ -90,36 +95,60 @@ public class GameScreen {
         objects.clear();
         obstacles.clear();
         particles.clear();
+        sceneryLeft.clear();
+        sceneryRight.clear();
         player.moveTo(Constants.LEFT_LANE);
+
+        // Pre-populate scenery so screen isn't empty at start
+        for (int i = 0; i < 6; i++) {
+            float startY = i * 150;
+            sceneryLeft.add(new Scenery(10, startY, i % 4));
+            sceneryRight.add(new Scenery(510, startY, (i + 2) % 4));
+        }
     }
 
     private void updateDifficulty() {
         gameTimer += Gdx.graphics.getDeltaTime();
-
-        if (gameTimer < 30) {
-            Constants.OBJECT_SPEED = Constants.BASE_OBJECT_SPEED;
-            Constants.SPAWN_DELAY = Constants.BASE_SPAWN_DELAY;
-        } else if (gameTimer < 60) {
-            Constants.OBJECT_SPEED = 380f;
-            Constants.SPAWN_DELAY = 0.9f;
-        } else if (gameTimer < 90) {
-            Constants.OBJECT_SPEED = 520f;
-            Constants.SPAWN_DELAY = 0.7f;
-        } else {
-            Constants.OBJECT_SPEED = Constants.MAX_OBJECT_SPEED;
-            Constants.SPAWN_DELAY = 0.5f;
-        }
+        // Smooth linear interpolation over 120 seconds: 220 → 450 (moderate cap)
+        float t = Math.min(1f, gameTimer / 120f);
+        Constants.OBJECT_SPEED = Constants.BASE_OBJECT_SPEED + t * (450f - Constants.BASE_OBJECT_SPEED);
+        // Spawn delay also eases smoothly: 1.2 → 0.65
+        Constants.SPAWN_DELAY = 1.2f - t * 0.55f;
     }
 
     private void updateLevel() {
-        int newLevel = (int)(score / Constants.LEVEL_UP_SCORE) + 1;
+        int newLevel = (int) (score / Constants.LEVEL_UP_SCORE) + 1;
         if (newLevel != RunForJoy.currentLevel) {
             RunForJoy.currentLevel = newLevel;
             levelUpTimer = 2f;
             for (int i = 0; i < 60; i++) {
-                particles.add(new Particle(Constants.SCREEN_WIDTH/2f + (float)(Math.random() * 300 - 150),
-                    Constants.SCREEN_HEIGHT/2f, 1, 0.8f, 0));
+                particles.add(new Particle(Constants.SCREEN_WIDTH / 2f + (float) (Math.random() * 300 - 150),
+                    Constants.SCREEN_HEIGHT / 2f, 1, 0.8f, 0));
             }
+        }
+    }
+
+    private void updateScenery(float delta) {
+        // Spawn new scenery at the top
+        scenerySpawnTimer -= delta;
+        if (scenerySpawnTimer <= 0) {
+            scenerySpawnTimer = 0.7f;
+            int type = (int) (Math.random() * 4);
+            sceneryLeft.add(new Scenery(10, Constants.SCREEN_HEIGHT + 50, type));
+            sceneryRight.add(new Scenery(510, Constants.SCREEN_HEIGHT + 50, (type + 2) % 4));
+        }
+
+        Iterator<Scenery> leftIt = sceneryLeft.iterator();
+        while (leftIt.hasNext()) {
+            Scenery s = leftIt.next();
+            s.update(delta);
+            if (s.isOffScreen()) leftIt.remove();
+        }
+        Iterator<Scenery> rightIt = sceneryRight.iterator();
+        while (rightIt.hasNext()) {
+            Scenery s = rightIt.next();
+            s.update(delta);
+            if (s.isOffScreen()) rightIt.remove();
         }
     }
 
@@ -150,12 +179,10 @@ public class GameScreen {
         player.update(delta);
         handleInput();
         spawner.update(delta, objects, obstacles);
+        updateScenery(delta);
 
         roadOffset -= Constants.OBJECT_SPEED * delta;
         if (roadOffset <= -100) roadOffset = 0;
-
-        treeOffset -= Constants.OBJECT_SPEED * delta * 0.4f;
-        if (treeOffset <= -180) treeOffset = 0;
 
         Iterator<GameObject> objIter = objects.iterator();
         while (objIter.hasNext()) {
@@ -203,32 +230,37 @@ public class GameScreen {
             return;
         }
 
-        long points = obj.getPointValue();
+        long basePoints = obj.getPointValue(); // correct signed value (+/-)
 
-        if (points > 0) {
+        if (basePoints > 0) {
             combo++;
-            long comboBonus = points * Math.min(combo, 5);
-            points += comboBonus / 2;
+            // Small flat combo bonus: +2 per consecutive catch, capped at +10
+            long comboBonus = Math.min(combo - 1, 5) * 2;
+            long total = basePoints + comboBonus;
 
-            if (combo % 5 == 0 && combo > 0) {
-                scorePopups.add(new ScorePopup(obj.x, obj.y + 50, "COMBO x" + combo + "!", 1, 0.5f, 0));
-                points += 30 * (combo / 5);
+            if (combo % 5 == 0) {
+                scorePopups.add(new ScorePopup(obj.x, obj.y + 55, "COMBO x" + combo + "!", 1, 0.5f, 0));
             }
             screenFlash = 0.12f;
             for (int i = 0; i < 12; i++) {
                 particles.add(new Particle(obj.x, obj.y, 0.2f, 0.9f, 0.3f));
             }
-            scorePopups.add(new ScorePopup(obj.x, obj.y, "+" + points, 0.2f, 0.9f, 0.3f));
+            // Popup shows what the card says, bonus shown separately if any
+            String popupText = "+" + basePoints + (comboBonus > 0 ? "(+" + comboBonus + ")" : "");
+            scorePopups.add(new ScorePopup(obj.x, obj.y, popupText, 0.2f, 0.9f, 0.3f));
+            score += total;
+
         } else {
+            // Negative card — subtract exactly what it says, no combo
             combo = 0;
             screenShake = 0.2f;
             for (int i = 0; i < 15; i++) {
                 particles.add(new Particle(obj.x, obj.y, 0.9f, 0.2f, 0.2f));
             }
-            scorePopups.add(new ScorePopup(obj.x, obj.y, "" + points, 0.9f, 0.2f, 0.2f));
+            scorePopups.add(new ScorePopup(obj.x, obj.y, String.valueOf(basePoints), 0.9f, 0.2f, 0.2f));
+            score += basePoints;
         }
 
-        score += points;
         if (score < 0) score = 0;
     }
 
@@ -250,7 +282,7 @@ public class GameScreen {
         RunForJoy.isInvincible = true;
 
         new Thread(() -> {
-            try { Thread.sleep((long)(Constants.INVINCIBLE_DURATION * 1000)); }
+            try { Thread.sleep((long) (Constants.INVINCIBLE_DURATION * 1000)); }
             catch (InterruptedException e) {}
             RunForJoy.isInvincible = false;
         }).start();
@@ -307,77 +339,78 @@ public class GameScreen {
     }
 
     public void render() {
-        Gdx.gl.glClearColor(0.1f, 0.1f, 0.15f, 1);
+        // Enable blending globally so alpha works for ShapeRenderer and SpriteBatch
+        Gdx.gl.glEnable(GL20.GL_BLEND);
+        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
+        Gdx.gl.glClearColor(0.05f, 0.05f, 0.1f, 1);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
-        float shakeX = screenShake > 0 ? (float)(Math.random() * screenShake * 15 - screenShake * 7.5f) : 0;
+        float shakeX = screenShake > 0 ? (float) (Math.random() * screenShake * 15 - screenShake * 7.5f) : 0;
 
         // ========== SHAPE RENDERER ==========
         shape.begin(ShapeRenderer.ShapeType.Filled);
 
-        // Screen flash
-        if (screenFlash > 0) {
-            shape.setColor(1, 1, 1, screenFlash * 0.6f);
-            shape.rect(0, 0, Constants.SCREEN_WIDTH, Constants.SCREEN_HEIGHT);
-        }
-
-        // Sky
-        shape.setColor(0.05f, 0.05f, 0.1f, 1);
+        // Sky gradient (dark blue-purple night)
+        shape.setColor(0.04f, 0.04f, 0.12f, 1);
         shape.rect(0, 0, Constants.SCREEN_WIDTH, Constants.SCREEN_HEIGHT);
 
-        // Stars
-        shape.setColor(1, 1, 1, 0.4f);
-        for (int i = 0; i < 80; i++) {
-            float starX = (i * 131) % Constants.SCREEN_WIDTH;
-            float starY = (i * 253 + roadOffset * 20) % Constants.SCREEN_HEIGHT;
-            shape.rect(starX, starY, 2, 2);
+        // Moon
+        shape.setColor(0.95f, 0.95f, 0.8f, 1);
+        shape.circle(520, 740, 28);
+        shape.setColor(0.04f, 0.04f, 0.12f, 1); // crater mask
+        shape.circle(530, 748, 20);
+
+        // Stars (static but prettier)
+        shape.setColor(1, 1, 1, 0.7f);
+        int[] starX = {30,80,140,200,260,320,380,440,490,550,
+            15,95,160,230,300,370,440,510,570,50,
+            120,195,270,345,415,485,555,75,185,395};
+        int[] starY = {780,760,770,750,765,755,745,760,775,752,
+            720,730,710,725,715,705,718,728,712,690,
+            700,685,695,680,692,688,678,660,670,665};
+        for (int i = 0; i < starX.length; i++) {
+            float twinkle = (float)(Math.sin(System.currentTimeMillis() * 0.002 + i) * 0.3 + 0.7);
+            shape.setColor(1, 1, 1, twinkle);
+            shape.rect(starX[i], starY[i], i % 3 == 0 ? 3 : 2, i % 3 == 0 ? 3 : 2);
         }
 
-        // ========== SIMPLE SCENERY (GUARANTEED VISIBLE) ==========
-        // LEFT TREES
-        for (float y = treeOffset; y < Constants.SCREEN_HEIGHT + 200; y += 140) {
-            // Trunk
-            shape.setColor(0.6f, 0.4f, 0.2f, 1);
-            shape.rect(40, y, 12, 40);
-            // Leaves
-            shape.setColor(0.1f, 0.8f, 0.1f, 1);
-            shape.circle(46, y + 50, 18);
-            shape.circle(35, y + 40, 14);
-            shape.circle(57, y + 40, 14);
-        }
-
-        // RIGHT TREES
-        for (float y = treeOffset; y < Constants.SCREEN_HEIGHT + 200; y += 140) {
-            // Trunk
-            shape.setColor(0.6f, 0.4f, 0.2f, 1);
-            shape.rect(548, y, 12, 40);
-            // Leaves
-            shape.setColor(0.1f, 0.8f, 0.1f, 1);
-            shape.circle(554, y + 50, 18);
-            shape.circle(543, y + 40, 14);
-            shape.circle(565, y + 40, 14);
-        }
-
-        // Road
-        shape.setColor(0.15f, 0.15f, 0.2f, 1);
-        shape.rect(100 + shakeX, 0, 400, Constants.SCREEN_HEIGHT);
-
-        // Side grass/soil
-        shape.setColor(0.4f, 0.3f, 0.15f, 1);
+        // Side soil/grass strips (drawn BEFORE scenery so scenery appears ON TOP)
+        shape.setColor(0.18f, 0.28f, 0.12f, 1); // dark grass left
         shape.rect(0 + shakeX, 0, 100, Constants.SCREEN_HEIGHT);
+        shape.setColor(0.18f, 0.28f, 0.12f, 1); // dark grass right
         shape.rect(500 + shakeX, 0, 100, Constants.SCREEN_HEIGHT);
 
-        // Road lines
-        shape.setColor(1, 1, 1, 0.5f);
+        // Grass highlight strips (inner edge)
+        shape.setColor(0.22f, 0.38f, 0.15f, 1);
+        shape.rect(85 + shakeX, 0, 15, Constants.SCREEN_HEIGHT);
+        shape.rect(500 + shakeX, 0, 15, Constants.SCREEN_HEIGHT);
+
+        // Road base
+        shape.setColor(0.18f, 0.18f, 0.22f, 1);
+        shape.rect(100 + shakeX, 0, 400, Constants.SCREEN_HEIGHT);
+
+        // Road side kerb/edge lines
+        shape.setColor(0.9f, 0.9f, 0.9f, 0.8f);
+        shape.rect(100 + shakeX, 0, 4, Constants.SCREEN_HEIGHT);
+        shape.rect(496 + shakeX, 0, 4, Constants.SCREEN_HEIGHT);
+
+        // Road dashes
+        shape.setColor(0.9f, 0.9f, 0.9f, 0.5f);
         for (float ly = roadOffset; ly < Constants.SCREEN_HEIGHT; ly += 70) {
-            shape.rect(295 + shakeX, ly + 25, 10, 35);
+            shape.rect(295 + shakeX, ly + 10, 10, 42);
         }
 
-        // Center line
-        shape.setColor(1, 1, 0.4f, 0.4f);
-        shape.rect(298 + shakeX, 0, 4, Constants.SCREEN_HEIGHT);
+        // Yellow center divider
+        shape.setColor(1f, 0.85f, 0.1f, 0.6f);
+        for (float ly = roadOffset; ly < Constants.SCREEN_HEIGHT; ly += 70) {
+            shape.rect(296 + shakeX, ly + 10, 4, 30);
+        }
 
-        // Game objects
+        // ---- Draw scenery ON TOP of grass, BESIDE road ----
+        for (Scenery s : sceneryLeft) s.draw(shape);
+        for (Scenery s : sceneryRight) s.draw(shape);
+
+        // Game objects and player
         if (!gameOver && !paused) {
             player.draw(shape);
             for (GameObject obj : objects) obj.drawShape(shape);
@@ -387,142 +420,188 @@ public class GameScreen {
         // Particles
         for (Particle p : particles) p.draw(shape);
 
+        // Screen flash (drawn last in shape pass, with blending enabled it works correctly)
+        if (screenFlash > 0) {
+            shape.setColor(1, 1, 0.8f, screenFlash * 0.35f);
+            shape.rect(0, 0, Constants.SCREEN_WIDTH, Constants.SCREEN_HEIGHT);
+        }
+
         // Pause buttons
         if (paused) {
-            shape.setColor(0.2f, 0.2f, 0.3f, 0.9f);
+            shape.setColor(0.1f, 0.1f, 0.2f, 0.85f);
+            shape.rect(0, 0, Constants.SCREEN_WIDTH, Constants.SCREEN_HEIGHT);
+            shape.setColor(0.2f, 0.5f, 0.3f, 1);
             shape.rect(resumeX + shakeX, resumeY, resumeW, resumeH);
+            shape.setColor(0.5f, 0.2f, 0.2f, 1);
             shape.rect(exitX + shakeX, exitY, exitW, exitH);
         }
 
         shape.end();
 
-        // ========== SPRITE BATCH RENDERER ==========
+        // ========== SPRITE BATCH (text & labels) ==========
+        // Reset projection to match actual window size so HUD coordinates are correct
+        batch.getProjectionMatrix().setToOrtho2D(0, 0, Gdx.graphics.getWidth(), Gdx.graphics.getHeight());
         batch.begin();
 
         // Object labels
-        for (GameObject obj : objects) {
-            obj.drawLabel(batch, font);
-        }
+        for (GameObject obj : objects) obj.drawLabel(batch, font);
 
         // Score popups
-        for (ScorePopup popup : scorePopups) {
-            popup.draw(batch, font);
-        }
+        for (ScorePopup popup : scorePopups) popup.draw(batch, font);
 
-        // ========== HUD TEXT WITH BLACK OUTLINE (GUARANTEED VISIBLE) ==========
-        String scoreText = "SCORE: " + formatScore(score);
-        String livesText = "LIVES: " + lives;
-        String bestText = "BEST: " + formatScore(highScore);
-        String levelText = "LVL: " + RunForJoy.currentLevel;
-        String comboText = combo > 0 ? "COMBO x" + combo : "";
+        // ---- HUD ----
+        drawHud(shakeX);
 
-        // Draw black outline (8 directions)
-        font.setColor(0, 0, 0, 1);
-        for (int dx = -2; dx <= 2; dx++) {
-            for (int dy = -2; dy <= 2; dy++) {
-                if (dx == 0 && dy == 0) continue;
-                font.draw(batch, scoreText, 20 + dx, Constants.SCREEN_HEIGHT - 20 + dy);
-                font.draw(batch, livesText, 20 + dx, Constants.SCREEN_HEIGHT - 55 + dy);
-                font.draw(batch, bestText, 20 + dx, Constants.SCREEN_HEIGHT - 90 + dy);
-                font.draw(batch, levelText, Constants.SCREEN_WIDTH - 100 + dx, Constants.SCREEN_HEIGHT - 20 + dy);
-                if (combo > 0) {
-                    font.draw(batch, comboText, Constants.SCREEN_WIDTH - 130 + dx, Constants.SCREEN_HEIGHT - 55 + dy);
-                }
-            }
-        }
-
-        // Draw actual text (bright colors)
-        font.setColor(1, 1, 0.2f, 1);
-        font.draw(batch, scoreText, 20, Constants.SCREEN_HEIGHT - 20);
-
-        font.setColor(1, 0.3f, 0.3f, 1);
-        font.draw(batch, livesText, 20, Constants.SCREEN_HEIGHT - 55);
-
-        font.setColor(0.3f, 1f, 0.3f, 1);
-        font.draw(batch, bestText, 20, Constants.SCREEN_HEIGHT - 90);
-
-        font.setColor(0.3f, 0.7f, 1f, 1);
-        font.draw(batch, levelText, Constants.SCREEN_WIDTH - 100, Constants.SCREEN_HEIGHT - 20);
-
-        if (combo > 0) {
-            float pulse = (float)(Math.sin(System.currentTimeMillis() * 0.01) * 0.3f + 1f);
-            font.setColor(1, 0.5f + pulse * 0.3f, 0, 1);
-            font.draw(batch, comboText, Constants.SCREEN_WIDTH - 130, Constants.SCREEN_HEIGHT - 55);
-        }
-
-        // Power-up status
-        float py = Constants.SCREEN_HEIGHT - 130;
-        if (RunForJoy.hasShield) {
-            font.setColor(0.4f, 0.7f, 1f, 1);
-            font.draw(batch, "SHIELD", 20, py);
-            py -= 25;
-        }
-        if (RunForJoy.isDoubleScoreActive) {
-            font.setColor(1, 0.8f, 0, 1);
-            font.draw(batch, "1.5x SCORE", 20, py);
-            py -= 25;
-        }
-        if (RunForJoy.isSlowMoActive) {
-            font.setColor(0.5f, 0.9f, 1f, 1);
-            font.draw(batch, "SLOW MO", 20, py);
-        }
-
-        // Level up animation
-        if (levelUpTimer > 0) {
-            float alpha = Math.min(1, levelUpTimer * 1.5f);
-            float scale = 2.5f + (1 - alpha) * 1.5f;
-            font.getData().setScale(scale);
-            font.setColor(1, 0.6f, 0, alpha);
-            font.draw(batch, "LEVEL " + RunForJoy.currentLevel + "!",
-                Constants.SCREEN_WIDTH/2f - 70, Constants.SCREEN_HEIGHT/2f + 50);
-            font.getData().setScale(2.0f);
-        }
-
-        // Game over
-        if (gameOver) {
-            // Outline
-            font.setColor(0, 0, 0, 1);
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -2; dy <= 2; dy++) {
-                    if (dx == 0 && dy == 0) continue;
-                    font.draw(batch, "GAME OVER", Constants.SCREEN_WIDTH/2f - 65 + dx, Constants.SCREEN_HEIGHT/2f + 60 + dy);
-                    font.draw(batch, "SCORE: " + formatScore(score), Constants.SCREEN_WIDTH/2f - 70 + dx, Constants.SCREEN_HEIGHT/2f + 20 + dy);
-                    font.draw(batch, "PRESS R", Constants.SCREEN_WIDTH/2f - 45 + dx, Constants.SCREEN_HEIGHT/2f - 30 + dy);
-                }
-            }
-            font.setColor(1, 0.2f, 0.2f, 1);
-            font.draw(batch, "GAME OVER", Constants.SCREEN_WIDTH/2f - 65, Constants.SCREEN_HEIGHT/2f + 60);
-            font.setColor(1, 1, 0.2f, 1);
-            font.draw(batch, "SCORE: " + formatScore(score), Constants.SCREEN_WIDTH/2f - 70, Constants.SCREEN_HEIGHT/2f + 20);
-            font.setColor(1, 0.8f, 0, 1);
-            font.draw(batch, "PRESS R", Constants.SCREEN_WIDTH/2f - 45, Constants.SCREEN_HEIGHT/2f - 30);
-        }
-
-        // Pause
-        if (paused) {
-            font.setColor(0, 0, 0, 1);
-            for (int dx = -2; dx <= 2; dx++) {
-                for (int dy = -2; dy <= 2; dy++) {
-                    if (dx == 0 && dy == 0) continue;
-                    font.draw(batch, "PAUSED", Constants.SCREEN_WIDTH/2f - 45 + dx, Constants.SCREEN_HEIGHT/2f + 80 + dy);
-                    font.draw(batch, "RESUME", resumeX + 45 + dx, resumeY + 37 + dy);
-                    font.draw(batch, "EXIT", exitX + 45 + dx, exitY + 37 + dy);
-                }
-            }
-            font.setColor(1, 0.4f, 0.4f, 1);
-            font.draw(batch, "PAUSED", Constants.SCREEN_WIDTH/2f - 45, Constants.SCREEN_HEIGHT/2f + 80);
-            font.setColor(1, 1, 1, 1);
-            font.draw(batch, "RESUME", resumeX + 45, resumeY + 35);
-            font.draw(batch, "EXIT", exitX + 45, exitY + 35);
-        }
+        if (gameOver) drawGameOver();
+        if (paused)   drawPause(shakeX);
 
         batch.end();
     }
 
-    private String formatScore(long score) {
-        if (score < 1000) return String.valueOf(score);
-        if (score < 1000000) return (score / 1000) + "K";
-        return (score / 1000000) + "M";
+    private void drawHud(float shakeX) {
+        int gh = Gdx.graphics.getHeight();
+        int gw = Gdx.graphics.getWidth();
+
+        String scoreText = "SCORE: " + formatScore(score);
+        String livesText = buildLivesText();
+        String bestText  = "BEST: "  + formatScore(highScore);
+        String levelText = "LVL " + RunForJoy.currentLevel;
+
+        font.getData().setScale(2.0f);
+
+        // -- Outline pass --
+        font.setColor(0, 0, 0, 1);
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                if (dx == 0 && dy == 0) continue;
+                font.draw(batch, scoreText, 15 + dx, gh - 12 + dy);
+                font.draw(batch, livesText,  15 + dx, gh - 50 + dy);
+                font.draw(batch, bestText,   15 + dx, gh - 88 + dy);
+                font.draw(batch, levelText,  gw - 120 + dx, gh - 12 + dy);
+            }
+        }
+
+        // -- Coloured text --
+        font.setColor(1f, 0.95f, 0.1f, 1);
+        font.draw(batch, scoreText, 15, gh - 12);
+
+        font.setColor(1f, 0.35f, 0.35f, 1);
+        font.draw(batch, livesText, 15, gh - 50);
+
+        font.setColor(0.4f, 1f, 0.4f, 1);
+        font.draw(batch, bestText, 15, gh - 88);
+
+        font.setColor(0.4f, 0.75f, 1f, 1);
+        font.draw(batch, levelText, gw - 120, gh - 12);
+
+        // Combo
+        if (combo > 1) {
+            String comboText = "x" + combo + " COMBO";
+            float pulse = (float) (Math.sin(System.currentTimeMillis() * 0.01) * 0.25 + 0.85);
+            font.getData().setScale(1.7f * pulse);
+            font.setColor(0, 0, 0, 1);
+            font.draw(batch, comboText, gw - 155, gh - 50);
+            font.setColor(1f, 0.55f, 0.05f, 1);
+            font.draw(batch, comboText, gw - 157, gh - 48);
+            font.getData().setScale(2.0f);
+        }
+
+        // Power-up indicators
+        float py = gh - 130;
+        font.getData().setScale(1.5f);
+        if (RunForJoy.hasShield) {
+            font.setColor(0, 0, 0, 1);
+            font.draw(batch, "SHIELD", 17, py + 1);
+            font.setColor(0.5f, 0.8f, 1f, 1);
+            font.draw(batch, "SHIELD", 15, py);
+            py -= 30;
+        }
+        if (RunForJoy.isDoubleScoreActive) {
+            font.setColor(0, 0, 0, 1);
+            font.draw(batch, "2x SCORE", 17, py + 1);
+            font.setColor(1f, 0.85f, 0.1f, 1);
+            font.draw(batch, "2x SCORE", 15, py);
+            py -= 30;
+        }
+        if (RunForJoy.isSlowMoActive) {
+            font.setColor(0, 0, 0, 1);
+            font.draw(batch, "SLOW MO", 17, py + 1);
+            font.setColor(0.5f, 0.95f, 1f, 1);
+            font.draw(batch, "SLOW MO", 15, py);
+        }
+        font.getData().setScale(2.0f);
+
+        // Level-up banner
+        if (levelUpTimer > 0) {
+            float alpha = Math.min(1f, levelUpTimer * 1.5f);
+            float scale = 2.8f + (1f - alpha) * 1.2f;
+            font.getData().setScale(scale);
+            font.setColor(0, 0, 0, alpha);
+            font.draw(batch, "LEVEL " + RunForJoy.currentLevel + "!",
+                gw / 2f - 75, gh / 2f + 55);
+            font.setColor(1f, 0.6f, 0.05f, alpha);
+            font.draw(batch, "LEVEL " + RunForJoy.currentLevel + "!",
+                gw / 2f - 77, gh / 2f + 57);
+            font.getData().setScale(2.0f);
+        }
+    }
+
+    /** Hearts for lives instead of just a number */
+    private String buildLivesText() {
+        StringBuilder sb = new StringBuilder("LIVES: ");
+        for (int i = 0; i < lives; i++) sb.append("* ");
+        return sb.toString().trim();
+    }
+
+    private void drawGameOver() {
+        float cx = Gdx.graphics.getWidth() / 2f;
+        float cy = Gdx.graphics.getHeight() / 2f;
+
+        font.getData().setScale(3.0f);
+        font.setColor(0, 0, 0, 1);
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dy = -2; dy <= 2; dy++) {
+                if (dx == 0 && dy == 0) continue;
+                font.draw(batch, "GAME OVER", cx - 90 + dx, cy + 80 + dy);
+            }
+        }
+        font.setColor(1f, 0.2f, 0.2f, 1);
+        font.draw(batch, "GAME OVER", cx - 92, cy + 82);
+
+        font.getData().setScale(2.0f);
+        font.setColor(0, 0, 0, 1);
+        font.draw(batch, "SCORE: " + formatScore(score), cx - 80, cy + 25);
+        font.draw(batch, "BEST:  " + formatScore(highScore), cx - 80, cy - 10);
+        font.draw(batch, "PRESS R TO RESTART", cx - 135, cy - 60);
+
+        font.setColor(1f, 1f, 0.2f, 1);
+        font.draw(batch, "SCORE: " + formatScore(score), cx - 82, cy + 27);
+        font.setColor(0.4f, 1f, 0.4f, 1);
+        font.draw(batch, "BEST:  " + formatScore(highScore), cx - 82, cy - 8);
+        font.setColor(1f, 0.8f, 0.1f, 1);
+        font.draw(batch, "PRESS R TO RESTART", cx - 137, cy - 58);
+        font.getData().setScale(2.0f);
+    }
+
+    private void drawPause(float shakeX) {
+        font.getData().setScale(2.8f);
+        font.setColor(0, 0, 0, 1);
+        font.draw(batch, "PAUSED", Constants.SCREEN_WIDTH / 2f - 65, Constants.SCREEN_HEIGHT / 2f + 100);
+        font.setColor(1f, 0.95f, 0.3f, 1);
+        font.draw(batch, "PAUSED", Constants.SCREEN_WIDTH / 2f - 67, Constants.SCREEN_HEIGHT / 2f + 102);
+
+        font.getData().setScale(2.0f);
+        font.setColor(0, 0, 0, 1);
+        font.draw(batch, "RESUME", resumeX + 42, resumeY + 37);
+        font.draw(batch, "EXIT",   exitX + 65,   exitY + 37);
+        font.setColor(1, 1, 1, 1);
+        font.draw(batch, "RESUME", resumeX + 40, resumeY + 35);
+        font.setColor(1, 0.6f, 0.6f, 1);
+        font.draw(batch, "EXIT",   exitX + 63,   exitY + 35);
+    }
+
+    private String formatScore(long s) {
+        return String.valueOf(s);
     }
 
     public void dispose() {
@@ -531,18 +610,15 @@ public class GameScreen {
         font.dispose();
     }
 
+    // ---- Inner class ----
     private class ScorePopup {
         float x, y, life = 1.0f;
         String text;
         float r, g, b;
 
         ScorePopup(float x, float y, String text, float r, float g, float b) {
-            this.x = x;
-            this.y = y;
-            this.text = text;
-            this.r = r;
-            this.g = g;
-            this.b = b;
+            this.x = x; this.y = y; this.text = text;
+            this.r = r; this.g = g; this.b = b;
         }
 
         boolean update(float delta) {
@@ -553,7 +629,7 @@ public class GameScreen {
 
         void draw(SpriteBatch batch, BitmapFont font) {
             font.setColor(r, g, b, life);
-            float scale = 1.2f * (1 + (1 - life) * 0.6f);
+            float scale = 1.4f * (1 + (1 - life) * 0.4f);
             font.getData().setScale(scale);
             font.draw(batch, text, x - 40, y);
             font.getData().setScale(2.0f);
