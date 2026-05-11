@@ -53,10 +53,19 @@ public class GameObject {
 
     public long getPointValue() {
         if (isPowerUp) return 0;
-        long points = value * operation.pointMultiplier;
+
+        long points;
+        if (operation == MathOperation.SUBTRACT) {
+            // Subtract: card says "-N", player loses N points
+            points = -value;
+        } else {
+            // ADD: +value, MULTIPLY: value * pointMultiplier, DIVIDE: value * pointMultiplier
+            points = (long) value * operation.pointMultiplier;
+        }
+
         if (isGolden) points *= 5;
-        if (RunForJoy.isDoubleScoreActive) points = (long)(points * 1.5);
-        return operation == MathOperation.SUBTRACT ? -points : points;
+        if (RunForJoy.isDoubleScoreActive) points = (long) (points * 1.5);
+        return points;
     }
 
     public void drawShape(ShapeRenderer shape) {
