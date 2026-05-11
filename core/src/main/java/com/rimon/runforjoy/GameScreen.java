@@ -29,7 +29,6 @@ public class GameScreen {
     private int lives, combo, highScore;
     private boolean gameOver, paused;
     private float screenShake, screenFlash, levelUpTimer;
-    private float gameTimer = 0;
 
     private float resumeX = 200, resumeY = 350, resumeW = 200, resumeH = 50;
     private float exitX = 200, exitY = 280, exitW = 200, exitH = 50;
@@ -78,7 +77,6 @@ public class GameScreen {
         gameOver = false;
         paused = false;
         screenShake = screenFlash = levelUpTimer = 0;
-        gameTimer = 0;
         scorePopups.clear();
         scenerySpawnTimer = 0;
 
@@ -108,12 +106,18 @@ public class GameScreen {
     }
 
     private void updateDifficulty() {
-        gameTimer += Gdx.graphics.getDeltaTime();
-        // Smooth linear interpolation over 120 seconds: 220 → 450 (moderate cap)
-        float t = Math.min(1f, gameTimer / 120f);
-        Constants.OBJECT_SPEED = Constants.BASE_OBJECT_SPEED + t * (450f - Constants.BASE_OBJECT_SPEED);
-        // Spawn delay also eases smoothly: 1.2 → 0.65
-        Constants.SPAWN_DELAY = 1.2f - t * 0.55f;
+        // Speed and spawn delay step up with each level — small, frequent increments
+        int level = RunForJoy.currentLevel;
+        // Each level adds 18 speed, capped at MAX. Level 1=260, 2=278, 3=296 … caps ~level 17
+        float targetSpeed = Math.min(
+            Constants.BASE_OBJECT_SPEED + (level - 1) * 18f,
+            Constants.MAX_OBJECT_SPEED
+        );
+        // Smooth lerp toward target so the jump isn't instant
+        Constants.OBJECT_SPEED += (targetSpeed - Constants.OBJECT_SPEED) * 0.05f;
+
+        // Spawn delay shrinks by 0.04s per level, minimum 0.6s
+        Constants.SPAWN_DELAY = Math.max(0.6f, Constants.BASE_SPAWN_DELAY - (level - 1) * 0.04f);
     }
 
     private void updateLevel() {
@@ -191,8 +195,14 @@ public class GameScreen {
             if (obj.isOffScreen()) {
                 objIter.remove();
             } else if (obj.collidesWith(player)) {
-                handleCollection(obj);
-                objIter.remove();
+                if (spawner.isRowCooldownActive()) {
+                    // Paired object from same row — silently remove, don't collect
+                    objIter.remove();
+                } else {
+                    handleCollection(obj);
+                    spawner.onObjectCollected();
+                    objIter.remove();
+                }
             }
         }
 

@@ -7,24 +7,41 @@ public class Spawner {
     private float timer = 0;
     private Random rand = new Random();
     private int sinceLastObstacle = 0;
-    private int consecutivePositive = 0; // track back-to-back positive-only rows
+    private int consecutivePositive = 0;
+
+    // Cooldown to prevent grabbing two objects from the same row
+    private float rowCooldown = 0;
+    private static final float ROW_COOLDOWN_TIME = 0.18f;
 
     public void update(float delta, List<GameObject> objects, List<Obstacle> obstacles) {
         timer += delta;
+        if (rowCooldown > 0) rowCooldown -= delta;
+
         if (timer >= Constants.SPAWN_DELAY) {
             timer = 0;
             spawnRow(objects, obstacles);
         }
     }
 
+    /** Called by GameScreen when any object in a row is collected —
+     *  marks a short window so the paired object is skipped, not grabbed. */
+    public void onObjectCollected() {
+        rowCooldown = ROW_COOLDOWN_TIME;
+    }
+
+    public boolean isRowCooldownActive() {
+        return rowCooldown > 0;
+    }
+
     private void spawnRow(List<GameObject> objects, List<Obstacle> obstacles) {
         sinceLastObstacle++;
 
-        boolean spawnObstacle = (sinceLastObstacle >= 3 && rand.nextFloat() < 0.6f)
-            || sinceLastObstacle >= 5;
+        // Obstacle chance: forced every 3 rows, random 55% after 2 rows
+        boolean spawnObstacle = (sinceLastObstacle >= 3 && rand.nextFloat() < 0.55f)
+            || sinceLastObstacle >= 4;
 
-        // Power-up check (only when double score is not active)
-        boolean spawnPowerUp = !RunForJoy.isDoubleScoreActive && rand.nextFloat() < 0.08f;
+        // Power-up: 7% chance, only when double score not active
+        boolean spawnPowerUp = !RunForJoy.isDoubleScoreActive && rand.nextFloat() < 0.07f;
 
         if (spawnPowerUp) {
             spawnPowerUp(objects);
@@ -36,9 +53,8 @@ public class Spawner {
             return;
         }
 
-        // Rare pair (× and ÷)
-        boolean trySpawnRare = rand.nextFloat() < 0.12f;
-        if (trySpawnRare && spawnRarePair(objects)) {
+        // Rare pair (× and ÷): 10% chance
+        if (rand.nextFloat() < 0.10f && spawnRarePair(objects)) {
             consecutivePositive = 0;
             if (spawnObstacle && rand.nextBoolean()) {
                 spawnNormalObstacle(obstacles);
@@ -47,20 +63,19 @@ public class Spawner {
             return;
         }
 
-        // After 2 positive-only rows in a row, force a mixed or obstacle row
+        // After 2 positive-only rows force a negative/mixed row
         if (consecutivePositive >= 2) {
             spawnMixed(objects);
             consecutivePositive = 0;
             if (spawnObstacle) {
-                if (rand.nextFloat() < 0.4f) spawnEvilWithGood(objects, obstacles);
-                else spawnNormalObstacle(obstacles);
+                spawnEvilWithGood(objects, obstacles);
                 sinceLastObstacle = 0;
             }
             return;
         }
 
-        // Normal spawn decision: 45% both positive, 55% mixed
-        if (rand.nextFloat() < 0.45f) {
+        // Row type: 30% both positive, 70% mixed (harder balance)
+        if (rand.nextFloat() < 0.30f) {
             spawnBothPositive(objects);
             consecutivePositive++;
         } else {
@@ -69,31 +84,26 @@ public class Spawner {
         }
 
         if (spawnObstacle) {
-            if (rand.nextFloat() < 0.4f) spawnEvilWithGood(objects, obstacles);
+            if (rand.nextFloat() < 0.5f) spawnEvilWithGood(objects, obstacles);
             else spawnNormalObstacle(obstacles);
             sinceLastObstacle = 0;
         }
     }
 
     private boolean spawnRarePair(List<GameObject> objects) {
-        if (rand.nextBoolean()) {
-            MathOperation op1 = MathOperation.MULTIPLY;
-            MathOperation op2 = MathOperation.DIVIDE;
-            int val1 = rand.nextInt(op1.maxValue - op1.minValue + 1) + op1.minValue;
-            int val2 = rand.nextInt(op2.maxValue - op2.minValue + 1) + op2.minValue;
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, op1, val1));
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, op2, val2));
-            return true;
-        }
-        return false;
+        MathOperation op1 = MathOperation.MULTIPLY;
+        MathOperation op2 = MathOperation.DIVIDE;
+        int val1 = rand.nextInt(op1.maxValue - op1.minValue + 1) + op1.minValue;
+        int val2 = rand.nextInt(op2.maxValue - op2.minValue + 1) + op2.minValue;
+        objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, op1, val1));
+        objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, op2, val2));
+        return true;
     }
 
     private void spawnBothPositive(List<GameObject> objects) {
         int val1 = rand.nextInt(MathOperation.ADD.maxValue - MathOperation.ADD.minValue + 1) + MathOperation.ADD.minValue;
         int val2 = rand.nextInt(MathOperation.ADD.maxValue - MathOperation.ADD.minValue + 1) + MathOperation.ADD.minValue;
-        while (val1 == val2) {
-            val2 = rand.nextInt(MathOperation.ADD.maxValue - MathOperation.ADD.minValue + 1) + MathOperation.ADD.minValue;
-        }
+        while (val1 == val2) val2 = rand.nextInt(MathOperation.ADD.maxValue - MathOperation.ADD.minValue + 1) + MathOperation.ADD.minValue;
         objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val1));
         objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val2));
     }
