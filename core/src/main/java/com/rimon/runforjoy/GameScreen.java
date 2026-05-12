@@ -188,6 +188,8 @@ public class GameScreen {
         roadOffset -= Constants.OBJECT_SPEED * delta;
         if (roadOffset <= -100) roadOffset = 0;
 
+        // First pass: find collected object Y so we can purge its row partner
+        float collectedY = -1;
         Iterator<GameObject> objIter = objects.iterator();
         while (objIter.hasNext()) {
             GameObject obj = objIter.next();
@@ -195,15 +197,29 @@ public class GameScreen {
             if (obj.isOffScreen()) {
                 objIter.remove();
             } else if (obj.collidesWith(player)) {
-                if (spawner.isRowCooldownActive()) {
-                    // Paired object from same row — silently remove, don't collect
-                    objIter.remove();
-                } else {
-                    handleCollection(obj);
-                    spawner.onObjectCollected();
-                    objIter.remove();
+                handleCollection(obj);
+                collectedY = obj.y;
+                objIter.remove();
+                break; // stop — handle row partner below
+            }
+        }
+
+        // Second pass: remove any object in the same row (within 80px Y) that wasn't collected
+        if (collectedY >= 0) {
+            Iterator<GameObject> partnerIter = objects.iterator();
+            while (partnerIter.hasNext()) {
+                GameObject partner = partnerIter.next();
+                if (Math.abs(partner.y - collectedY) < 80f) {
+                    partnerIter.remove(); // silently destroy — can't grab both
                 }
             }
+        }
+
+        // Continue updating remaining objects that weren't collected this frame
+        objIter = objects.iterator();
+        while (objIter.hasNext()) {
+            GameObject obj = objIter.next();
+            if (obj.isOffScreen()) objIter.remove();
         }
 
         Iterator<Obstacle> obsIter = obstacles.iterator();
@@ -240,14 +256,10 @@ public class GameScreen {
             return;
         }
 
-        long basePoints = obj.getPointValue(); // correct signed value (+/-)
+        long points = obj.getPointValue(); // exactly what the card says
 
-        if (basePoints > 0) {
+        if (points > 0) {
             combo++;
-            // Small flat combo bonus: +2 per consecutive catch, capped at +10
-            long comboBonus = Math.min(combo - 1, 5) * 2;
-            long total = basePoints + comboBonus;
-
             if (combo % 5 == 0) {
                 scorePopups.add(new ScorePopup(obj.x, obj.y + 55, "COMBO x" + combo + "!", 1, 0.5f, 0));
             }
@@ -255,22 +267,17 @@ public class GameScreen {
             for (int i = 0; i < 12; i++) {
                 particles.add(new Particle(obj.x, obj.y, 0.2f, 0.9f, 0.3f));
             }
-            // Popup shows what the card says, bonus shown separately if any
-            String popupText = "+" + basePoints + (comboBonus > 0 ? "(+" + comboBonus + ")" : "");
-            scorePopups.add(new ScorePopup(obj.x, obj.y, popupText, 0.2f, 0.9f, 0.3f));
-            score += total;
-
+            scorePopups.add(new ScorePopup(obj.x, obj.y, "+" + points, 0.2f, 0.9f, 0.3f));
         } else {
-            // Negative card — subtract exactly what it says, no combo
             combo = 0;
             screenShake = 0.2f;
             for (int i = 0; i < 15; i++) {
                 particles.add(new Particle(obj.x, obj.y, 0.9f, 0.2f, 0.2f));
             }
-            scorePopups.add(new ScorePopup(obj.x, obj.y, String.valueOf(basePoints), 0.9f, 0.2f, 0.2f));
-            score += basePoints;
+            scorePopups.add(new ScorePopup(obj.x, obj.y, String.valueOf(points), 0.9f, 0.2f, 0.2f));
         }
 
+        score += points;
         if (score < 0) score = 0;
     }
 
