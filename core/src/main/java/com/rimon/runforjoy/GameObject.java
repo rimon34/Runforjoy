@@ -4,7 +4,6 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont;
 import com.badlogic.gdx.graphics.g2d.GlyphLayout;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
-import com.badlogic.gdx.math.MathUtils;
 
 public class GameObject {
     public float x, y;
@@ -38,7 +37,7 @@ public class GameObject {
         float speed = RunForJoy.isSlowMoActive ? Constants.OBJECT_SPEED * 0.5f : Constants.OBJECT_SPEED;
         y -= speed * delta;
         wobbleOffset += delta * 8;
-        if (isPowerUp || isGolden) pulseTimer += delta * 5;
+        pulseTimer += delta * 5;
     }
 
     public boolean isOffScreen() {
@@ -51,86 +50,102 @@ public class GameObject {
             y > Constants.CATCH_Y_BOTTOM;
     }
 
+    /**
+     * Returns the plain signed point delta for ADD and SUBTRACT only.
+     * MULTIPLY and DIVIDE are handled separately in GameScreen (they act on total score).
+     */
     public long getPointValue() {
         if (isPowerUp) return 0;
-
         long points;
         if (operation == MathOperation.SUBTRACT) {
-            // Subtract: card says "-N", player loses N points
             points = -value;
+        } else if (operation == MathOperation.ADD) {
+            points = value;
         } else {
-            // ADD: +value, MULTIPLY: value * pointMultiplier, DIVIDE: value * pointMultiplier
-            points = (long) value * operation.pointMultiplier;
+            // MULTIPLY / DIVIDE — GameScreen handles these directly; return 0 here
+            return 0;
         }
-
         if (isGolden) points *= 5;
-        if (RunForJoy.isDoubleScoreActive) points = (long) (points * 1.5);
+        if (RunForJoy.isDoubleScoreActive) points = (long)(points * 1.5);
         return points;
     }
 
     public void drawShape(ShapeRenderer shape) {
-        float pulse = (float)(Math.sin(pulseTimer) * 0.1f + 0.9f);
-        float width = 70 * pulse;
-        float height = 60 * pulse;
+        float pulse = (float)(Math.sin(pulseTimer) * 0.08f + 0.92f);
+        float width  = 72 * pulse;
+        float height = 62 * pulse;
 
         if (isPowerUp) {
-            shape.setColor(0.7f, 0.3f, 0.9f, 1);
+            // Gold — unmistakably different from regular cards
+            shape.setColor(1f, 0.75f, 0f, 1);
             shape.rect(x - width/2, y, width, height);
-            shape.setColor(0.9f, 0.5f, 1f, 1);
+            shape.setColor(1f, 0.92f, 0.3f, 1);
             shape.rect(x - width/2 + 4, y + 4, width - 8, height - 8);
-            shape.setColor(1, 1, 1, 1);
-            shape.circle(x, y + height/2, 18 * pulse);
+            shape.setColor(1f, 1f, 0.7f, 1);
+            shape.circle(x, y + height / 2f, 14 * pulse);
+
         } else if (isGolden) {
-            shape.setColor(1f, 0.85f, 0f, 1);
+            shape.setColor(0.95f, 0.80f, 0f, 1);
             shape.rect(x - width/2, y, width, height);
-            shape.setColor(1f, 0.95f, 0.3f, 1);
+            shape.setColor(1f, 0.95f, 0.4f, 1);
             shape.rect(x - width/2 + 3, y + 3, width - 6, height - 6);
+
         } else {
-            switch (operation) {
-                case ADD:
-                    shape.setColor(0.1f, 0.8f, 0.2f, 1);
-                    break;
-                case SUBTRACT:
-                    shape.setColor(0.9f, 0.2f, 0.2f, 1);
-                    break;
-                case MULTIPLY:
-                    shape.setColor(0.7f, 0.3f, 0.9f, 1);
-                    break;
-                case DIVIDE:
-                    shape.setColor(0.2f, 0.6f, 0.9f, 1);
-                    break;
-            }
+            // ALL regular cards — same deep indigo
+            shape.setColor(0.38f, 0.30f, 0.72f, 1f);
             shape.rect(x - width/2, y, width, height);
-            shape.setColor(1, 1, 1, 0.2f);
-            shape.rect(x - width/2 + 2, y + 2, width - 4, 8);
+            shape.setColor(0.22f, 0.16f, 0.56f, 1f);
+            shape.rect(x - width/2 + 4, y + 4, width - 8, height - 8);
+            // Glossy sheen
+            shape.setColor(0.55f, 0.48f, 0.90f, 0.45f);
+            shape.rect(x - width/2 + 4, y + height - 14, width - 8, 10);
         }
     }
 
     public void drawLabel(SpriteBatch batch, BitmapFont font) {
         if (isPowerUp) {
-            font.setColor(1, 1, 1, 1);
-            font.getData().setScale(2.2f);
+            font.getData().setScale(2.4f);
             layout.setText(font, powerUpType.symbol);
-            font.draw(batch, powerUpType.symbol, x - layout.width/2, y + 45);
-            font.getData().setScale(1.6f);
+            font.setColor(0, 0, 0, 1);
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = -2; dy <= 2; dy++) {
+                    if (dx == 0 && dy == 0) continue;
+                    font.draw(batch, powerUpType.symbol, x - layout.width / 2f + dx, y + 42 + dy);
+                }
+            }
+            font.setColor(1f, 1f, 0.5f, 1f);
+            font.draw(batch, powerUpType.symbol, x - layout.width / 2f, y + 42);
+            font.getData().setScale(2.0f);
             return;
         }
 
-        String text = operation.symbol + value;
-        if (operation == MathOperation.ADD && value > 0) text = "+" + value;
+        // Correct readable symbols — no * or /
+        String text;
+        switch (operation) {
+            case ADD:      text = "+" + value;  break;
+            case SUBTRACT: text = "-" + value;  break;
+            case MULTIPLY: text = "x" + value;  break;  // lowercase x, renders cleanly in LibGDX BitmapFont
+            case DIVIDE:   text = "/" + value;  break;  // kept as / since BitmapFont cant render unicode ÷ reliably
+            default:       text = operation.symbol + value; break;
+        }
 
-        font.getData().setScale(1.8f);
+        font.getData().setScale(2.4f);
+        layout.setText(font, text);
+        float tx = x - layout.width / 2f;
+        float ty = y + 44;
 
-        for (int offset = -2; offset <= 2; offset++) {
-            for (int offset2 = -2; offset2 <= 2; offset2++) {
-                if (offset == 0 && offset2 == 0) continue;
-                font.setColor(0, 0, 0, 0.8f);
-                font.draw(batch, text, x - 25 + offset, y + 45 + offset2);
+        // Thick black outline
+        font.setColor(0f, 0f, 0f, 1f);
+        for (int dx = -3; dx <= 3; dx++) {
+            for (int dy = -3; dy <= 3; dy++) {
+                if (dx == 0 && dy == 0) continue;
+                font.draw(batch, text, tx + dx, ty + dy);
             }
         }
 
-        font.setColor(1, 1, 1, 1);
-        font.draw(batch, text, x - 25, y + 45);
-        font.getData().setScale(1.6f);
+        // Bright white on top
+        font.setColor(1f, 1f, 1f, 1f);
+        font.draw(batch, text, tx, ty);
+        font.getData().setScale(2.0f);
     }
 }
