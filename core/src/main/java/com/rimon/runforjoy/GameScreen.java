@@ -256,7 +256,32 @@ public class GameScreen {
             return;
         }
 
-        long points = obj.getPointValue(); // exactly what the card says
+        // MULTIPLY: score = score * value (integer)
+        if (obj.operation == MathOperation.MULTIPLY) {
+            long before = score;
+            score = score * obj.value;
+            long gained = score - before;
+            combo++;
+            screenFlash = 0.18f;
+            for (int i = 0; i < 20; i++) particles.add(new Particle(obj.x, obj.y, 0.6f, 0.2f, 1f));
+            scorePopups.add(new ScorePopup(obj.x, obj.y, "x" + obj.value + "! +" + gained, 0.6f, 0.2f, 1f));
+            return;
+        }
+
+        // DIVIDE: score = score / value (integer division, floor)
+        if (obj.operation == MathOperation.DIVIDE) {
+            long before = score;
+            score = score / obj.value;  // integer division — no float, odd numbers floor automatically
+            long lost = before - score;
+            combo = 0;
+            screenShake = 0.15f;
+            for (int i = 0; i < 15; i++) particles.add(new Particle(obj.x, obj.y, 1f, 0.6f, 0.1f));
+            scorePopups.add(new ScorePopup(obj.x, obj.y, "/" + obj.value + " -" + lost, 1f, 0.6f, 0.1f));
+            return;
+        }
+
+        // ADD and SUBTRACT — plain value from card
+        long points = obj.getPointValue();
 
         if (points > 0) {
             combo++;
