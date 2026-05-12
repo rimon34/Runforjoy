@@ -651,30 +651,5 @@ public class GameScreen {
         batch.dispose();
         font.dispose();
     }
-
-    // ---- Inner class ----
-    private class ScorePopup {
-        float x, y, life = 1.0f;
-        String text;
-        float r, g, b;
-
-        ScorePopup(float x, float y, String text, float r, float g, float b) {
-            this.x = x; this.y = y; this.text = text;
-            this.r = r; this.g = g; this.b = b;
-        }
-
-        boolean update(float delta) {
-            y += delta * 85;
-            life -= delta * 1.8f;
-            return life > 0;
-        }
-
-        void draw(SpriteBatch batch, BitmapFont font) {
-            font.setColor(r, g, b, life);
-            float scale = 1.4f * (1 + (1 - life) * 0.4f);
-            font.getData().setScale(scale);
-            font.draw(batch, text, x - 40, y);
-            font.getData().setScale(2.0f);
-        }
     }
 }
