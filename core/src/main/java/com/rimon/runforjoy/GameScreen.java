@@ -127,7 +127,7 @@ public class GameScreen {
             levelUpTimer = 2f;
             for (int i = 0; i < 60; i++) {
                 particles.add(new Particle(Constants.SCREEN_WIDTH / 2f + (float) (Math.random() * 300 - 150),
-                    Constants.SCREEN_HEIGHT / 2f, 1, 0.8f, 0));
+                        Constants.SCREEN_HEIGHT / 2f, 1, 0.8f, 0));
             }
         }
     }
@@ -188,8 +188,9 @@ public class GameScreen {
         roadOffset -= Constants.OBJECT_SPEED * delta;
         if (roadOffset <= -100) roadOffset = 0;
 
-        // First pass: find collected object Y so we can purge its row partner
+        // First pass: find collected object, then instantly kill its row partner by rowId
         float collectedY = -1;
+        int collectedRowId = -1;
         Iterator<GameObject> objIter = objects.iterator();
         while (objIter.hasNext()) {
             GameObject obj = objIter.next();
@@ -199,23 +200,18 @@ public class GameScreen {
             } else if (obj.collidesWith(player)) {
                 handleCollection(obj);
                 collectedY = obj.y;
+                collectedRowId = obj.rowId;
                 objIter.remove();
-                break; // stop — handle row partner below
+                break;
             }
         }
 
-        // Second pass: remove any object in the same row (within 80px Y) that wasn't collected
-        if (collectedY >= 0) {
-            Iterator<GameObject> partnerIter = objects.iterator();
-            while (partnerIter.hasNext()) {
-                GameObject partner = partnerIter.next();
-                if (Math.abs(partner.y - collectedY) < 80f) {
-                    partnerIter.remove(); // silently destroy — can't grab both
-                }
-            }
+        // Second pass: remove the row partner by exact rowId match — instant, no timing
+        if (collectedRowId >= 0) {
+            Spawner.removeRowPartner(objects, collectedRowId);
         }
 
-        // Continue updating remaining objects that weren't collected this frame
+        // Continue updating remaining objects
         objIter = objects.iterator();
         while (objIter.hasNext()) {
             GameObject obj = objIter.next();
@@ -252,35 +248,17 @@ public class GameScreen {
             for (int i = 0; i < 25; i++) {
                 particles.add(new Particle(obj.x, obj.y, 0.7f, 0.3f, 0.9f));
             }
-            scorePopups.add(new ScorePopup(obj.x, obj.y, obj.powerUpType.symbol, 0.7f, 0.3f, 0.9f));
+            String label;
+            switch (obj.powerUpType) {
+                case SHIELD:       label = "SHIELD!";       break;
+                case DOUBLE_SCORE: label = "DOUBLE SCORE!"; break;
+                case SLOW_MO:      label = "SLOW MO!";      break;
+                default:           label = "POWER UP!";     break;
+            }
+            scorePopups.add(new ScorePopup(obj.x, obj.y, label, 1f, 0.85f, 0.1f));
             return;
         }
 
-        // MULTIPLY: score = score * value (integer)
-        if (obj.operation == MathOperation.MULTIPLY) {
-            long before = score;
-            score = score * obj.value;
-            long gained = score - before;
-            combo++;
-            screenFlash = 0.18f;
-            for (int i = 0; i < 20; i++) particles.add(new Particle(obj.x, obj.y, 0.6f, 0.2f, 1f));
-            scorePopups.add(new ScorePopup(obj.x, obj.y, "x" + obj.value + "! +" + gained, 0.6f, 0.2f, 1f));
-            return;
-        }
-
-        // DIVIDE: score = score / value (integer division, floor)
-        if (obj.operation == MathOperation.DIVIDE) {
-            long before = score;
-            score = score / obj.value;  // integer division — no float, odd numbers floor automatically
-            long lost = before - score;
-            combo = 0;
-            screenShake = 0.15f;
-            for (int i = 0; i < 15; i++) particles.add(new Particle(obj.x, obj.y, 1f, 0.6f, 0.1f));
-            scorePopups.add(new ScorePopup(obj.x, obj.y, "/" + obj.value + " -" + lost, 1f, 0.6f, 0.1f));
-            return;
-        }
-
-        // ADD and SUBTRACT — plain value from card
         long points = obj.getPointValue();
 
         if (points > 0) {
@@ -405,11 +383,11 @@ public class GameScreen {
         // Stars (static but prettier)
         shape.setColor(1, 1, 1, 0.7f);
         int[] starX = {30,80,140,200,260,320,380,440,490,550,
-            15,95,160,230,300,370,440,510,570,50,
-            120,195,270,345,415,485,555,75,185,395};
+                        15,95,160,230,300,370,440,510,570,50,
+                        120,195,270,345,415,485,555,75,185,395};
         int[] starY = {780,760,770,750,765,755,745,760,775,752,
-            720,730,710,725,715,705,718,728,712,690,
-            700,685,695,680,692,688,678,660,670,665};
+                        720,730,710,725,715,705,718,728,712,690,
+                        700,685,695,680,692,688,678,660,670,665};
         for (int i = 0; i < starX.length; i++) {
             float twinkle = (float)(Math.sin(System.currentTimeMillis() * 0.002 + i) * 0.3 + 0.7);
             shape.setColor(1, 1, 1, twinkle);
@@ -580,10 +558,10 @@ public class GameScreen {
             font.getData().setScale(scale);
             font.setColor(0, 0, 0, alpha);
             font.draw(batch, "LEVEL " + RunForJoy.currentLevel + "!",
-                gw / 2f - 75, gh / 2f + 55);
+                    gw / 2f - 75, gh / 2f + 55);
             font.setColor(1f, 0.6f, 0.05f, alpha);
             font.draw(batch, "LEVEL " + RunForJoy.currentLevel + "!",
-                gw / 2f - 77, gh / 2f + 57);
+                    gw / 2f - 77, gh / 2f + 57);
             font.getData().setScale(2.0f);
         }
     }
@@ -651,5 +629,30 @@ public class GameScreen {
         batch.dispose();
         font.dispose();
     }
+
+    // ---- Inner class ----
+    private class ScorePopup {
+        float x, y, life = 1.0f;
+        String text;
+        float r, g, b;
+
+        ScorePopup(float x, float y, String text, float r, float g, float b) {
+            this.x = x; this.y = y; this.text = text;
+            this.r = r; this.g = g; this.b = b;
+        }
+
+        boolean update(float delta) {
+            y += delta * 85;
+            life -= delta * 1.8f;
+            return life > 0;
+        }
+
+        void draw(SpriteBatch batch, BitmapFont font) {
+            font.setColor(r, g, b, life);
+            float scale = 1.4f * (1 + (1 - life) * 0.4f);
+            font.getData().setScale(scale);
+            font.draw(batch, text, x - 40, y);
+            font.getData().setScale(2.0f);
+        }
     }
 }
