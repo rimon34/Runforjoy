@@ -1,5 +1,6 @@
 package com.rimon.runforjoy;
 
+import java.util.Iterator;
 import java.util.List;
 import java.util.Random;
 
@@ -8,6 +9,7 @@ public class Spawner {
     private Random rand = new Random();
     private int sinceLastObstacle = 0;
     private int consecutivePositive = 0;
+    private int rowIdCounter = 0; // unique ID for each spawned row
 
     public void update(float delta, List<GameObject> objects, List<Obstacle> obstacles) {
         timer += delta;
@@ -17,31 +19,21 @@ public class Spawner {
         }
     }
 
+    private int nextRowId() {
+        return ++rowIdCounter;
+    }
+
     private void spawnRow(List<GameObject> objects, List<Obstacle> obstacles) {
         sinceLastObstacle++;
 
         boolean spawnObstacle = (sinceLastObstacle >= 3 && rand.nextFloat() < 0.55f)
-            || sinceLastObstacle >= 4;
+                || sinceLastObstacle >= 4;
 
-        // Power up: 7% — always paired with a guaranteed positive, NEVER with a negative
+        // Power up: 7% — always paired with a + card, never with a - or obstacle
         if (!RunForJoy.isDoubleScoreActive && rand.nextFloat() < 0.07f) {
             spawnPowerUpRow(objects);
             consecutivePositive = 0;
-            if (spawnObstacle) {
-                spawnNormalObstacle(obstacles);
-                sinceLastObstacle = 0;
-            }
-            return;
-        }
-
-        // Rare row (× and ÷): always one positive × and one positive ÷ — no negatives
-        if (rand.nextFloat() < 0.10f) {
-            spawnRarePair(objects);
-            consecutivePositive++;
-            if (spawnObstacle) {
-                spawnNormalObstacle(obstacles);
-                sinceLastObstacle = 0;
-            }
+            // No obstacle on power up rows — keep it clean
             return;
         }
 
@@ -50,88 +42,90 @@ public class Spawner {
             spawnMixed(objects);
             consecutivePositive = 0;
             if (spawnObstacle) {
-                spawnEvilWithGood(objects, obstacles);
+                // Obstacle always paired with a + card, never -
+                spawnObstacleWithPositive(objects, obstacles);
                 sinceLastObstacle = 0;
             }
             return;
         }
 
-        // 25% both positive, 75% mixed — negatives dominate to force switching
+        // 25% both positive, 75% mixed
         if (rand.nextFloat() < 0.25f) {
             spawnBothPositive(objects);
             consecutivePositive++;
         } else {
-            spawnMixed(objects);   // always exactly one + and one -, never two -
+            spawnMixed(objects);
             consecutivePositive = 0;
         }
 
         if (spawnObstacle) {
-            if (rand.nextFloat() < 0.5f) spawnEvilWithGood(objects, obstacles);
-            else spawnNormalObstacle(obstacles);
+            spawnObstacleWithPositive(objects, obstacles);
             sinceLastObstacle = 0;
         }
     }
 
-    /** One × and one ÷ — both give points, both positive */
-    private void spawnRarePair(List<GameObject> objects) {
-        int val1 = rand.nextInt(MathOperation.MULTIPLY.maxValue - MathOperation.MULTIPLY.minValue + 1) + MathOperation.MULTIPLY.minValue;
-        int val2 = rand.nextInt(MathOperation.DIVIDE.maxValue   - MathOperation.DIVIDE.minValue   + 1) + MathOperation.DIVIDE.minValue;
-        if (rand.nextBoolean()) {
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.MULTIPLY, val1));
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.DIVIDE,   val2));
-        } else {
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.DIVIDE,   val2));
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.MULTIPLY, val1));
-        }
-    }
-
-    /** Two different + values */
+    /** Two different + values, same row ID so only one can be collected */
     private void spawnBothPositive(List<GameObject> objects) {
+        int rowId = nextRowId();
         int val1 = randVal(MathOperation.ADD);
         int val2 = randVal(MathOperation.ADD);
         while (val1 == val2) val2 = randVal(MathOperation.ADD);
-        objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val1));
-        objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val2));
+        GameObject a = new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val1);
+        GameObject b = new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, val2);
+        a.rowId = rowId;
+        b.rowId = rowId;
+        objects.add(a);
+        objects.add(b);
     }
 
-    /** Exactly one + and one - , randomly assigned to lanes — NEVER two negatives */
+    /** Exactly one + and one -, same row ID — never two negatives */
     private void spawnMixed(List<GameObject> objects) {
+        int rowId = nextRowId();
         int posVal = randVal(MathOperation.ADD);
         int negVal = randVal(MathOperation.SUBTRACT);
+        GameObject pos = new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.ADD,      posVal);
+        GameObject neg = new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.SUBTRACT, negVal);
+        pos.rowId = rowId;
+        neg.rowId = rowId;
         if (rand.nextBoolean()) {
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.ADD,      posVal));
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.SUBTRACT, negVal));
+            pos.x = Constants.LEFT_LANE;
+            neg.x = Constants.RIGHT_LANE;
         } else {
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, MathOperation.SUBTRACT, negVal));
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD,      posVal));
+            pos.x = Constants.RIGHT_LANE;
+            neg.x = Constants.LEFT_LANE;
         }
+        objects.add(pos);
+        objects.add(neg);
     }
 
-    /** Power up in one lane, guaranteed + card in the other — never paired with negative */
+    /** Obstacle in one lane, guaranteed + card in the other — never - with obstacle */
+    private void spawnObstacleWithPositive(List<GameObject> objects, List<Obstacle> obstacles) {
+        int rowId = nextRowId();
+        int posVal = randVal(MathOperation.ADD);
+        GameObject pos;
+        if (rand.nextBoolean()) {
+            pos = new GameObject(Constants.LEFT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, posVal);
+            obstacles.add(new Obstacle(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, ObstacleType.NORMAL));
+        } else {
+            pos = new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, posVal);
+            obstacles.add(new Obstacle(Constants.LEFT_LANE, Constants.SCREEN_HEIGHT + 50, ObstacleType.NORMAL));
+        }
+        pos.rowId = rowId;
+        objects.add(pos);
+    }
+
+    /** Power up in one lane, + card in the other — clean, no negatives, no obstacles */
     private void spawnPowerUpRow(List<GameObject> objects) {
+        int rowId = nextRowId();
         PowerUpType type = selectPowerUp();
         float lane      = rand.nextBoolean() ? Constants.LEFT_LANE : Constants.RIGHT_LANE;
         float otherLane = (lane == Constants.LEFT_LANE) ? Constants.RIGHT_LANE : Constants.LEFT_LANE;
-        objects.add(new GameObject(lane,      Constants.SCREEN_HEIGHT + 50, type));
-        objects.add(new GameObject(otherLane, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, randVal(MathOperation.ADD)));
-    }
-
-    /** Good card in one lane, obstacle in the other */
-    private void spawnEvilWithGood(List<GameObject> objects, List<Obstacle> obstacles) {
-        MathOperation goodOp = rand.nextFloat() < 0.6f ? MathOperation.ADD : MathOperation.MULTIPLY;
-        int goodVal = randVal(goodOp);
-        if (rand.nextBoolean()) {
-            objects.add(new GameObject(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, goodOp, goodVal));
-            obstacles.add(new Obstacle(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, ObstacleType.EVIL));
-        } else {
-            objects.add(new GameObject(Constants.RIGHT_LANE, Constants.SCREEN_HEIGHT + 50, goodOp, goodVal));
-            obstacles.add(new Obstacle(Constants.LEFT_LANE,  Constants.SCREEN_HEIGHT + 50, ObstacleType.EVIL));
-        }
-    }
-
-    private void spawnNormalObstacle(List<Obstacle> obstacles) {
-        float lane = rand.nextBoolean() ? Constants.LEFT_LANE : Constants.RIGHT_LANE;
-        obstacles.add(new Obstacle(lane, Constants.SCREEN_HEIGHT + 50, ObstacleType.NORMAL));
+        GameObject pu  = new GameObject(lane,      Constants.SCREEN_HEIGHT + 50, type);
+        GameObject pos = new GameObject(otherLane, Constants.SCREEN_HEIGHT + 50, MathOperation.ADD, randVal(MathOperation.ADD));
+        pu.rowId  = rowId;
+        pos.rowId = rowId;
+        objects.add(pu);
+        objects.add(pos);
     }
 
     private int randVal(MathOperation op) {
@@ -144,5 +138,16 @@ public class Spawner {
             if (roll < type.spawnChance) return type;
         }
         return PowerUpType.SHIELD;
+    }
+
+    /** Remove the row partner of a just-collected object by matching rowId */
+    public static void removeRowPartner(List<GameObject> objects, int collectedRowId) {
+        Iterator<GameObject> it = objects.iterator();
+        while (it.hasNext()) {
+            if (it.next().rowId == collectedRowId) {
+                it.remove();
+                return;
+            }
+        }
     }
 }
