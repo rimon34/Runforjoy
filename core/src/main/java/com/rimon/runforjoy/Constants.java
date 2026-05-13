@@ -7,11 +7,11 @@ public class Constants {
     public static final float RIGHT_LANE        = 400f;
     public static final float PLAYER_Y          = 100f;
     public static final int START_LIVES         = 3;
-    public static final int LEVEL_UP_SCORE      = 100;       // level up every 100 pts
-    public static final float BASE_SPAWN_DELAY  = 1.4f;      // slightly slower start
+    public static final int LEVEL_UP_SCORE      = 150;       // LV1=150, LV2=300, LV3=450...
+    public static final float BASE_SPAWN_DELAY  = 1.6f;      // slower, more readable
     public static float SPAWN_DELAY             = BASE_SPAWN_DELAY;
-    public static final float BASE_OBJECT_SPEED = 260f;      // a bit faster at start
-    public static final float MAX_OBJECT_SPEED  = 560f;      // moderate cap
+    public static final float BASE_OBJECT_SPEED = 220f;      // noticeably slower start
+    public static final float MAX_OBJECT_SPEED  = 480f;      // moderate cap
     public static final float CATCH_X_MARGIN    = 50f;
     public static final float CATCH_Y_TOP       = 150f;
     public static final float CATCH_Y_BOTTOM    = 50f;
