@@ -18,7 +18,6 @@ public class Hud {
         shape.rect(ex, ey, w, h);
         shape.setColor(0.4f, 0.4f, 0.5f, 0.9f);
         shape.rect(rx + 3, ry + 3, w - 6, h - 6);
-        shape.rect(ex + 3, ey + 3, w - 6, h - 6);
-        shape.rect(ex + 3, ey + 3, w - 6, h - 6);
+        shape.rect(ex + 3, ey + 3, w - 6, h - 6);        shape.rect(ex + 3, ey + 3, w - 6, h - 6
     }
 }
