@@ -1,4 +1,4 @@
-package com.example.runforjoy;
+package com.rimon.runforjoy;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
